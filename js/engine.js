@@ -4,14 +4,16 @@
  * 같은 개념이라도 유형, 오답 보기, 보기 순서, O/X 참·거짓이 매번 달라진다.
  */
 const Engine = (() => {
+  // 실제 시험(금융투자협회)은 모두 객관식 4지선다형이므로 4지선다로 낼 수 있는 유형만 둔다
   const TYPES = {
-    blank:     { label: '빈칸 채우기' },
-    ox:        { label: 'O / X' },
     pickTrue:  { label: '옳은 것 고르기' },
     pickFalse: { label: '옳지 않은 것 고르기' },
     combo:     { label: '모두 고르기 (ㄱ~ㄹ)' },
+    blank:     { label: '빈칸에 알맞은 것' },
     calc:      { label: '계산형' },
   };
+  // 빈칸형은 오답 후보가 3개 이상이라 4지선다가 되는 개념에만 낸다
+  const canBlank = (f) => f.w.length >= 3;
   const LETTERS = ['ㄱ', 'ㄴ', 'ㄷ', 'ㄹ'];
 
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => (
@@ -50,26 +52,9 @@ const Engine = (() => {
       const [pre, post] = parts(fact);
       return {
         ...base,
-        prompt: '빈칸에 들어갈 알맞은 말은?',
+        prompt: '다음 ( ) 안에 들어갈 내용으로 옳은 것은?',
         stem: `${esc(pre)}<span class="blank" aria-label="빈칸"></span>${esc(post)}`,
         choices: opts.map((v) => ({ html: esc(v), correct: v === fact.a })),
-      };
-    }
-
-    if (type === 'ox') {
-      const isTrue = Math.random() < 0.5;
-      const v = isTrue ? fact.a : pick(fact.w);
-      return {
-        ...base,
-        prompt: '다음 설명이 옳으면 O, 틀리면 X를 고르세요.',
-        stem: sentence(fact, v),
-        ox: true,
-        statementTrue: isTrue,
-        wrongValue: isTrue ? null : v,
-        choices: [
-          { html: 'O', correct: isTrue },
-          { html: 'X', correct: !isTrue },
-        ],
       };
     }
 
@@ -145,5 +130,5 @@ const Engine = (() => {
     };
   }
 
-  return { TYPES, make, makeCalc, shuffle, pick, esc };
+  return { TYPES, make, makeCalc, canBlank, shuffle, pick, esc };
 })();

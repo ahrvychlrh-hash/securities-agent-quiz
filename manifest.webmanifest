@@ -1,10 +1,10 @@
 {
-  "name": "투자권유대행인 문제풀이",
-  "short_name": "투자권유대행인",
-  "description": "증권투자권유대행인 자격시험 문제풀이",
+  "name": "꿈디 - 꿈을 디자인하다",
+  "short_name": "꿈디",
+  "description": "증권투자권유대행인·펀드투자권유대행인·투자자산운용사 문제풀이",
   "start_url": "./index.html",
   "display": "standalone",
-  "background_color": "#F5F5F5",
-  "theme_color": "#FFFFFF",
+  "background_color": "#F3F6FB",
+  "theme_color": "#1A7BFF",
   "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
 }
