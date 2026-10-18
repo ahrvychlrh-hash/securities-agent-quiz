@@ -8,10 +8,11 @@
 
   // ───────── 저장소 (이 기기 브라우저에만 저장) ─────────
   // facts[id] = { n: 푼 횟수, ok: 맞힌 횟수, streak: 연속 정답, wrong: 오답노트 여부 }
+  // days['2026-10-18'] = 그날 푼 문제 수 · goal = 하루 목표 · mocks[자격증] = 모의고사 기록
   const db = load();
 
   function load() {
-    const d = { facts: {}, types: ALL_TYPES.slice() };
+    const d = { facts: {}, types: ALL_TYPES.slice(), days: {}, goal: 10, mocks: {} };
     try {
       const s = JSON.parse(localStorage.getItem(KEY));
       if (s) Object.assign(d, s);
@@ -37,8 +38,21 @@
   const cutoff = (s) => Math.ceil(s.items * cert.pass.subject); // 과목별 과락 면제에 필요한 정답 수
   const pctText = (r) => `${Math.round(r * 100)}%`;
 
+  // ───────── 하루 목표 · 연속 학습일 ─────────
+  const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const todayCount = () => db.days[dayKey()] || 0;
+  // 오늘(또는 어제)까지 하루도 빠짐없이 문제를 푼 날 수. 오늘 아직 안 풀었으면 어제까지 이어진 기록을 보여 준다
+  function streakDays() {
+    const d = new Date();
+    if (!db.days[dayKey(d)]) d.setDate(d.getDate() - 1);
+    let n = 0;
+    while (db.days[dayKey(d)]) { n += 1; d.setDate(d.getDate() - 1); }
+    return n;
+  }
+
   function record(fact, ok) {
     const s = stat(fact.id);
+    db.days[dayKey()] = todayCount() + 1;
     s.n += 1;
     if (ok) {
       s.ok += 1;
@@ -230,6 +244,82 @@ ${ctx}`;
     }
   }
 
+  // 한 번 묻고 답을 받는 공통 호출 (Claude 또는 제미나이)
+  function aiGenerate(prompt, { signal, onText }) {
+    if (aiProvider() === 'claude') return sample(prompt, { cache: false, signal, onText });
+    return Gemini.stream({
+      system: '너는 한국 금융투자협회 자격시험을 준비하는 학습자를 돕는 튜터야. 한국어로, 마크다운 제목·굵게·표 없이 줄바꿈과 "•" 목록만 써서 답해.',
+      turns: [{ role: 'user', content: prompt }], signal, onText,
+    });
+  }
+
+  // 오답노트 AI 정리
+  let notesAI = null; // { certId, busy, text, note, ctl }
+
+  async function summarizeWrong() {
+    const ws = wrongFacts();
+    if (!ws.length || !aiProvider()) return;
+    notesAI = { certId: cert.id, busy: true, text: '', note: '', ctl: new AbortController() };
+    render();
+    const lines = ws.slice(0, 25).map((f) => {
+      const st = db.facts[f.id];
+      const fact = f.gen ? `${f.name}: ${f.formula}` : f.q.replace('{}', f.a);
+      return `- [${f.t}] ${fact} (틀린 횟수 ${st.n - st.ok}회)`;
+    });
+    const prompt = `${cert.name} 시험을 준비하는 학습자가 아래 개념들을 문제에서 틀렸어. 각 줄은 바른 내용이야.
+
+${lines.join('\n')}
+
+다음 순서로 짧게 정리해 줘 (전체 15줄 이내):
+1. 자주 틀리는 주제: 어떤 챕터·주제에서 많이 틀리는지 한두 줄
+2. 헷갈리는 개념: 서로 섞어서 기억하기 쉬운 개념 쌍과 구분하는 방법
+3. 외우는 팁: 숫자·용어를 기억하기 쉬운 요령 3가지 이내
+4. 다음 공부 순서: 어떤 챕터부터 다시 보면 좋을지
+확실하지 않은 내용은 지어내지 말고, 위 개념에 근거해서만 말해.`;
+    try {
+      const { text } = await aiGenerate(prompt, {
+        signal: notesAI.ctl.signal,
+        onText: ({ text: live }) => {
+          notesAI.text = live;
+          const el = $app.querySelector('.ai-summary-text');
+          if (el) { el.textContent = live; el.classList.remove('pending'); }
+        },
+      });
+      notesAI.text = text;
+    } catch (e) {
+      if (e && e.text) notesAI.text = e.text;
+      notesAI.note = aiErrorText(e && e.code);
+    } finally {
+      notesAI.busy = false;
+      notesAI.ctl = null;
+      if (view === 'notes') render();
+    }
+  }
+
+  function notesAIHTML() {
+    const provider = aiProvider();
+    if (!provider) {
+      if (IN_CLAUDE) return '';
+      return `
+        <section class="panel ai ai-setup">
+          <div class="ai-head">${icon.spark}<span>AI로 오답 원인 정리</span></div>
+          <p class="ai-setup-text">제미나이 API 키를 등록하면 틀린 개념을 모아 헷갈리는 부분과 외우는 팁을 정리해 줘요.</p>
+          <button class="btn" data-act="settings">${icon.gear}<span>AI 튜터 설정하기</span></button>
+        </section>`;
+    }
+    const st = notesAI && notesAI.certId === cert.id ? notesAI : null;
+    return `
+      <section class="panel ai">
+        <div class="ai-head">${icon.spark}<span>AI로 오답 원인 정리</span></div>
+        ${st && (st.text || st.busy) ? `<div class="ai-summary-text ai-msg assistant ${st.busy && !st.text ? 'pending' : ''}">${st.text ? esc(st.text) : '틀린 개념을 살펴보는 중…'}</div>` : `
+          <p class="ai-setup-text">지금까지 틀린 개념을 모아 자주 틀리는 주제, 헷갈리는 개념, 외우는 팁, 다음 공부 순서를 정리해 줘요.</p>`}
+        ${st && st.note ? `<p class="ai-note">${esc(st.note)}</p>` : ''}
+        ${st && st.busy
+          ? '<button class="btn" data-act="notes-ai-stop">중지</button>'
+          : `<button class="btn primary" data-act="notes-ai">${icon.spark}<span>${st && st.text ? '다시 정리하기' : '오답 정리 받기'}</span></button>`}
+      </section>`;
+  }
+
   function aiHTML() {
     const provider = aiProvider();
     if (!provider) {
@@ -277,9 +367,102 @@ ${ctx}`;
   }
 
   function go(next) {
+    if (view === 'mock' && next !== 'mock') stopTimer();
     view = next;
     render();
     window.scrollTo(0, 0);
+  }
+
+  // ───────── 실전 모의고사 ─────────
+  // 실제 시험처럼 챕터별 출제 문항 수만큼(총 100문항) 뽑고, 제한시간이 지나면 자동 제출한다.
+  // 개념 수가 출제 문항 수보다 적은 챕터는 같은 개념을 다른 유형으로 다시 낸다.
+  let mock = null;
+  let timerId = null;
+  const EXAM_TYPES = ['pickTrue', 'pickFalse', 'combo', 'blank'];
+
+  function buildMock() {
+    const qs = [];
+    cert.subjects.forEach((s) => {
+      cert.chapters.filter((c) => c.s === s.id).forEach((c) => {
+        const items = chapterItems(c);
+        if (!items.length) return;
+        const used = {};
+        let pool = [];
+        for (let k = 0; k < c.items; k++) {
+          if (!pool.length) pool = shuffle(items);
+          const f = pool.pop();
+          if (f.gen) { qs.push(makeCalc(f)); continue; }
+          const tried = used[f.id] || [];
+          let types = EXAM_TYPES.filter((t) => (t !== 'blank' || canBlank(f)) && !tried.includes(t));
+          if (!types.length) types = EXAM_TYPES.filter((t) => t !== 'blank' || canBlank(f));
+          const type = pick(types);
+          used[f.id] = tried.concat(type);
+          qs.push(make(f, type, cert.facts.filter((x) => x.s === f.s)));
+        }
+      });
+    });
+    return qs;
+  }
+
+  function startMock() {
+    const qs = buildMock();
+    mock = {
+      qs, answers: new Array(qs.length).fill(null), i: 0,
+      started: Date.now(), deadline: Date.now() + cert.pass.minutes * 60000,
+      grid: false, confirm: null, result: null, reviewWrongOnly: true,
+    };
+    go('mock');
+    startTimer();
+  }
+
+  const fmtTime = (ms) => {
+    const t = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(t / 3600);
+    const m = Math.floor((t % 3600) / 60);
+    const sec = t % 60;
+    return `${h ? `${h}:` : ''}${String(m).padStart(h ? 2 : 1, '0')}:${String(sec).padStart(2, '0')}`;
+  };
+
+  // 화면 전체를 다시 그리지 않고 남은 시간만 갱신
+  function startTimer() {
+    stopTimer();
+    const tick = () => {
+      if (!mock || mock.result) { stopTimer(); return; }
+      const left = mock.deadline - Date.now();
+      const el = $app.querySelector('.mock-timer');
+      if (el) {
+        el.textContent = fmtTime(left);
+        el.classList.toggle('warn', left < 10 * 60000);
+      }
+      if (left <= 0) submitMock(true);
+    };
+    tick();
+    timerId = setInterval(tick, 1000);
+  }
+  function stopTimer() { if (timerId) { clearInterval(timerId); timerId = null; } }
+
+  function submitMock(timeUp) {
+    if (!mock || mock.result) return;
+    stopTimer();
+    const per = cert.subjects.map((s) => ({ s, ok: 0, total: 0 }));
+    mock.qs.forEach((q, i) => {
+      const a = mock.answers[i];
+      const ok = a != null && q.choices[a].correct;
+      const row = per.find((p) => p.s.id === q.fact.s);
+      row.total += 1;
+      if (ok) row.ok += 1;
+      if (a != null) record(q.fact, ok); // 안 푼 문항은 기록하지 않음
+    });
+    const score = per.reduce((a, p) => a + p.ok, 0);
+    const total = mock.qs.length;
+    per.forEach((p) => { p.cut = Math.ceil(p.total * cert.pass.subject); p.pass = p.ok >= p.cut; });
+    const pass = score >= Math.ceil(total * cert.pass.total) && per.every((p) => p.pass);
+    mock.result = { per, score, total, pass, timeUp, used: Date.now() - mock.started };
+    const list = db.mocks[cert.id] || (db.mocks[cert.id] = []);
+    list.push({ d: dayKey(), score, total, pass });
+    if (list.length > 20) list.shift();
+    save();
+    go('mockResult');
   }
 
   // ───────── 아이콘 ─────────
@@ -294,6 +477,9 @@ ${ctx}`;
     back: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8 10 12.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     book: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 4.2C6.8 3.3 5 3 2.5 3v9.5c2.5 0 4.3.3 5.5 1.2m0-9.5c1.2-.9 3-1.2 5.5-1.2v9.5c-2.5 0-4.3.3-5.5 1.2m0-9.5v9.5" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
     pencil: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 3 2.5 2.5-7 7H3.5V10zM9 4.5 11.5 7" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
+    flame: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 14.5c2.8 0 4.5-1.9 4.5-4.4 0-2.7-2.1-4.3-2.9-6.6-.3 1.6-1.2 2.6-2 3-.1-1.7-.8-3.3-2.2-4.5.2 2.8-2.9 4.5-2.9 8.1 0 2.5 1.8 4.4 5.5 4.4z" fill="currentColor"/></svg>',
+    timer: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="9" r="5.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 6v3l2 1.5M6.5 2h3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    home: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2.5 7.5 8 3l5.5 4.5M4 6.5V13h3V9.5h2V13h3V6.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     gear: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 1.8v1.7M8 12.5v1.7M14.2 8h-1.7M3.5 8H1.8M12.4 3.6l-1.2 1.2M4.8 11.2l-1.2 1.2M12.4 12.4l-1.2-1.2M4.8 4.8 3.6 3.6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>',
     spark: '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.5 9.2 6.8 13.5 8 9.2 9.2 8 13.5 6.8 9.2 2.5 8 6.8 6.8z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>',
     info: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="5.75" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 7.2v3.6M8 5.2v.1" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>',
@@ -323,12 +509,12 @@ ${ctx}`;
   const md = (s) => { const d = toDate(s); return `${d.getMonth() + 1}월 ${d.getDate()}일`; };
   const weekday = (s) => '일월화수목금토'[toDate(s).getDay()];
 
-  // 오늘 이후(오늘 포함) 시험만, 날짜순
-  function upcomingExams() {
+  // 자격증마다 아직 접수가 끝나지 않은 가장 가까운 회차 하나 (없으면 x = null → 다음 해 일정 발표 전)
+  // 접수가 열린·곧 열릴 시험을 날짜순으로 먼저, 일정 없는 자격증은 뒤에
+  function nextExams() {
     const t = today();
-    return CERTS.flatMap((c) => c.schedule.map((x) => ({ ...x, cert: c })))
-      .filter((x) => toDate(x.exam) >= t)
-      .sort((a, b) => toDate(a.exam) - toDate(b.exam));
+    return CERTS.map((c) => ({ cert: c, x: c.schedule.find((x) => toDate(x.apply[1]) >= t) || null }))
+      .sort((a, b) => (a.x ? toDate(a.x.exam) : Infinity) - (b.x ? toDate(b.x.exam) : Infinity));
   }
 
   function applyState(x) {
@@ -388,7 +574,8 @@ ${ctx}`;
         </radialGradient>
       </defs>
 
-      <ellipse cx="120" cy="268" rx="74" ry="11" fill="url(#kg-shadow)"/>
+      <ellipse class="c-shadow" cx="120" cy="268" rx="74" ry="11" fill="url(#kg-shadow)"/>
+      <g class="c-jump">
 
       <!-- 다리 -->
       <rect x="90" y="226" width="26" height="40" rx="13" fill="url(#kg-pants)"/>
@@ -420,9 +607,12 @@ ${ctx}`;
       <circle cx="120" cy="174" r="5.5" fill="#F2A21E"/>
 
       <!-- 왼팔(흔드는 손) -->
-      <ellipse cx="62" cy="168" rx="14" ry="26" transform="rotate(-38 62 168)" fill="url(#kg-shirt)"/>
-      <circle cx="47" cy="146" r="13" fill="url(#kg-fur)"/>
+      <g class="c-arm">
+        <ellipse cx="62" cy="168" rx="14" ry="26" transform="rotate(-38 62 168)" fill="url(#kg-shirt)"/>
+        <circle cx="47" cy="146" r="13" fill="url(#kg-fur)"/>
+      </g>
 
+      <g class="c-head">
       <!-- 귀 -->
       <circle cx="58" cy="58" r="25" fill="url(#kg-ear)"/>
       <circle cx="182" cy="58" r="25" fill="url(#kg-ear)"/>
@@ -447,18 +637,55 @@ ${ctx}`;
       <path d="M111 131q4.5 6 9 0q4.5 6 9 0" stroke="#2A2230" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
       <ellipse cx="76" cy="124" rx="12" ry="7" fill="#FF9DA0" opacity=".55"/>
       <ellipse cx="164" cy="124" rx="12" ry="7" fill="#FF9DA0" opacity=".55"/>
+      </g>
+      </g>
     </svg>`;
 
-  // 히어로 배경 장식 (구름 · 반짝임)
-  const HERO_DECO = `
-    <span class="cloud c1" aria-hidden="true"></span>
-    <span class="cloud c2" aria-hidden="true"></span>
+  // 히어로 배경 장식 (반짝임)
+  const HERO_SPARKS = `
     <span class="spark s1" aria-hidden="true"></span>
     <span class="spark s2" aria-hidden="true"></span>`;
 
+  // 오늘의 목표 · 연속 학습일 카드 (홈 맨 위)
+  function goalCard() {
+    const n = todayCount();
+    const goal = db.goal || 10;
+    const pct = Math.min(100, Math.round((n / goal) * 100));
+    const streak = streakDays();
+    const done = n >= goal;
+    const msg = done ? '오늘 목표 달성! 내일도 이어 가 봐요.'
+      : n ? `${goal - n}문제만 더 풀면 오늘 목표 달성이에요.`
+        : streak ? '오늘도 풀면 연속 기록이 이어져요.' : '오늘 첫 문제를 풀어 볼까요?';
+    return `
+      <section class="panel goal ${done ? 'done' : ''}">
+        <div class="goal-ring" style="--p:${pct}"><span>${n}<small>/${goal}</small></span></div>
+        <div class="goal-main">
+          <div class="goal-top">
+            <b>오늘의 목표</b>
+            <span class="streak">${icon.flame}<span>연속 ${streak}일</span></span>
+          </div>
+          <p class="goal-msg">${msg}</p>
+          <div class="week">${weekDots()}</div>
+        </div>
+      </section>`;
+  }
+
+  // 최근 7일 학습 여부 (오늘이 맨 오른쪽)
+  function weekDots() {
+    const out = [];
+    for (let k = 6; k >= 0; k--) {
+      const d = new Date();
+      d.setDate(d.getDate() - k);
+      const n = db.days[dayKey(d)] || 0;
+      out.push(`<span class="wd ${n ? 'on' : ''} ${k === 0 ? 'today' : ''}" title="${d.getMonth() + 1}/${d.getDate()} ${n}문제"><i></i><small>${'일월화수목금토'[d.getDay()]}</small></span>`);
+    }
+    return out.join('');
+  }
+
   function homeView() {
-    const exams = upcomingExams();
+    const exams = nextExams();
     const t = today();
+    const nextYear = t.getFullYear() + 1;
     // 홈에서는 자격증 이름만 보여 주고, 자세한 정보는 들어가서 확인한다
     const cards = CERTS.map((c) => `
         <button class="cert-pick" data-act="pick-cert" data-id="${c.id}">
@@ -467,23 +694,34 @@ ${ctx}`;
           ${icon.chevron}
         </button>`).join('');
 
-    const rows = exams.map((x) => {
+    const rows = exams.map(({ cert: c, x }) => {
+      if (!x) {
+        return `
+        <li class="exam-row pending">
+          <span class="exam-date"><b>미정</b><small>${nextYear}년</small></span>
+          <span class="exam-main">
+            <span class="exam-name">${esc(c.name)}</span>
+            <span class="exam-sub">올해 접수가 모두 끝났어요 · ${nextYear}년 일정은 보통 11월 말에 발표돼요</span>
+          </span>
+          <span class="dday wait">발표 전</span>
+        </li>`;
+      }
       const dday = Math.round((toDate(x.exam) - t) / DAY);
       const st = applyState(x);
       return `
         <li class="exam-row">
           <span class="exam-date"><b>${md(x.exam)}</b><small>(${weekday(x.exam)})</small></span>
           <span class="exam-main">
-            <span class="exam-name">${esc(x.cert.name)} <small>${esc(x.round)}</small></span>
+            <span class="exam-name">${esc(c.name)} <small>${esc(x.round)}</small></span>
             <span class="exam-sub"><span class="apply ${st.cls}">${st.text}</span> · 합격 발표 ${md(x.result)}</span>
           </span>
-          <span class="dday ${dday === 0 ? 'today' : ''}">${dday === 0 ? '오늘' : `D-${dday}`}</span>
+          <span class="dday">D-${dday}</span>
         </li>`;
     }).join('');
 
     return `
       <section class="hero hero-home">
-        ${HERO_DECO}
+        ${HERO_SPARKS}
         <header class="hero-bar">
           ${BRAND}
           <button class="icon-btn on-hero" data-act="settings" aria-label="설정">${icon.gear}</button>
@@ -497,19 +735,52 @@ ${ctx}`;
       </section>
 
       <main class="page sheet">
+        ${goalCard()}
         <h2 class="sheet-title">자격증 선택</h2>
         <section class="cert-picks">${cards}</section>
 
-        <h2 class="section-title">${t.getFullYear()}년 남은 시험 일정 <span class="hint">금융투자협회 시행</span></h2>
+        <h2 class="section-title">다음 시험 일정 <span class="hint">아직 접수할 수 있는 회차 기준</span></h2>
         <section class="panel">
-          ${exams.length ? `<ul class="exam-list">${rows}</ul>` : `
-            <p class="exam-empty">${t.getFullYear()}년에 남은 시험이 없어요. 내년 일정이 발표되면 금융투자협회에서 확인해 주세요.</p>`}
+          <ul class="exam-list">${rows}</ul>
         </section>
         <p class="footnote">시험 일정은 금융투자협회 ${t.getFullYear()}년 공지(교육업체 안내 기준)를 옮긴 것이에요. 접수 전 <a href="https://license.kofia.or.kr" target="_blank" rel="noopener">금융투자협회 자격시험센터</a>에서 꼭 다시 확인하세요.</p>
       </main>`;
   }
 
+  // 자격증 화면 맨 아래: 이 자격증으로 할 수 있는 일 + 공부 기간·합격률
+  function careerCard() {
+    if (!cert.careers) return '';
+    const rates = cert.passRates || [];
+    const latest = rates[rates.length - 1];
+    const pct1 = (n) => (Math.round(n * 10 + 1e-6) / 10).toFixed(1); // 34.55 → 34.6 (부동소수점 반올림 보정)
+    const avg = rates.length ? rates.reduce((a, x) => a + x.r, 0) / rates.length : 0;
+    const bar = (x) => `
+      <div class="pay-row ${x === latest ? 'mid' : ''}">
+        <span class="pay-label">${x.y}년</span>
+        <span class="pay-track"><i style="width:${x.r}%"></i></span>
+        <span class="pay-val">${pct1(x.r)}%</span>
+      </div>`;
+    return `
+      <h2 class="section-title">이 자격증으로 할 수 있는 일</h2>
+      <section class="panel career">
+        <ul class="career-list">${cert.careers.map((c, i) => `
+          <li><span class="career-num">${i + 1}</span><span><b>${esc(c.t)}</b><span>${esc(c.d)}</span></span></li>`).join('')}
+        </ul>
+      </section>
+      ${cert.study || latest ? `
+      <h2 class="section-title">공부 기간 · 합격률</h2>
+      <section class="panel pay">
+        <div class="facts-grid">
+          ${cert.study ? `<div class="fact"><span class="fact-key">평균 공부 기간</span><b>${esc(cert.study.period)}</b><span class="fact-sub">${esc(cert.study.note)}</span></div>` : ''}
+          ${latest ? `<div class="fact"><span class="fact-key">최근 합격률 (${latest.y}년)</span><b>${pct1(latest.r)}%</b><span class="fact-sub">응시자 ${latest.n.toLocaleString('ko-KR')}명 · 3년 평균 ${pct1(avg)}%</span></div>` : ''}
+        </div>
+        ${rates.length ? `<div class="pay-job">연도별 합격률</div>${rates.map(bar).join('')}` : ''}
+        <p class="pay-note">합격률은 금융투자협회 통계를 옮긴 교육업체(와우패스) 자료 기준이에요. 공부 기간은 공식 통계가 없어 수험 정보와 합격 후기를 바탕으로 한 대략적인 기간이에요.</p>
+      </section>` : ''}`;
+  }
+
   function certView() {
+    const lastMock = (db.mocks[cert.id] || []).slice(-1)[0];
     const seen = cert.items.filter((f) => db.facts[f.id] && db.facts[f.id].n).length;
     const totals = cert.items.map((f) => db.facts[f.id]).filter(Boolean)
       .reduce((a, s) => ({ n: a.n + s.n, ok: a.ok + s.ok }), { n: 0, ok: 0 });
@@ -548,9 +819,9 @@ ${ctx}`;
 
     return `
       <section class="hero hero-cert">
-        ${HERO_DECO}
+        ${HERO_SPARKS}
         <header class="hero-bar">
-          <button class="icon-btn on-hero" data-act="home" aria-label="자격증 선택으로">${icon.back}</button>
+          <button class="home-pill" data-act="home" aria-label="홈으로 가서 다른 자격증 고르기">${icon.home}<span>홈</span></button>
           <div class="topbar-actions">
             <button class="icon-btn on-hero" data-act="notes" aria-label="오답노트">${icon.note}${wrongN ? `<span class="badge">${wrongN}</span>` : ''}</button>
             <button class="icon-btn on-hero" data-act="settings" aria-label="설정">${icon.gear}</button>
@@ -572,6 +843,15 @@ ${ctx}`;
           <div class="stat"><span class="stat-val">${wrongN}</span><span class="stat-key">오답노트</span></div>
         </section>
 
+        <button class="mock-entry" data-act="mock-start">
+          <span class="mode-icon">${icon.timer}</span>
+          <span class="mode-main">
+            <span class="mode-title">실전 모의고사</span>
+            <span class="mode-sub">${cert.pass.totalItems}문항 · ${cert.pass.minutes}분 · 실제 출제 비중 그대로, 과락·합격 판정${lastMock ? `<br>최근 ${lastMock.score}점 · ${lastMock.pass ? '합격' : '불합격'} (${lastMock.d.slice(5).replace('-', '/')})` : ''}</span>
+          </span>
+          ${icon.chevron}
+        </button>
+
         <section class="stack">
           <button class="btn primary lg" data-act="random">${icon.play}<span>전 과목 랜덤 ${SESSION_SIZE}문제</span></button>
           <button class="btn lg" data-act="review" ${wrongN ? '' : 'disabled'}>${icon.note}<span>오답노트 복습${wrongN ? ` · ${wrongN}개` : ''}</span></button>
@@ -583,6 +863,8 @@ ${ctx}`;
 
         <h2 class="section-title">출제 유형 <span class="hint">실제 시험처럼 모두 4지선다로 나오고, 같은 개념도 유형이 바뀌어요</span></h2>
         <section class="chips">${chips}</section>
+
+        ${careerCard()}
 
         <p class="footnote">학습 기록은 이 기기의 브라우저에만 저장됩니다. 문제 내용은 학습 보조용이며, 최신 법령·협회 기본서와 함께 확인하세요.</p>
       </main>`;
@@ -643,9 +925,19 @@ ${ctx}`;
       <header class="topbar">
         <button class="icon-btn" data-act="settings-back" aria-label="뒤로">${icon.back}</button>
         <div class="topbar-title">설정</div>
-        <span class="icon-btn ghost"></span>
+        <button class="icon-btn" data-act="home" aria-label="홈으로">${icon.home}</button>
       </header>
-      <main class="page">${body}</main>`;
+      <main class="page">
+        <section class="panel set-card">
+          <div class="set-head"><span class="set-title">${icon.flame}<span>하루 목표 문제 수</span></span></div>
+          <div class="chips">${[5, 10, 20, 30, 50].map((n) => `
+            <button class="chip ${db.goal === n ? 'on' : ''}" data-act="goal" data-n="${n}" aria-pressed="${db.goal === n}">${icon.check}<span>${n}문제</span></button>`).join('')}
+          </div>
+          <p class="set-hint">홈 화면의 오늘의 목표에 반영돼요. 모의고사로 푼 문제도 포함돼요.</p>
+        </section>
+        <div class="set-gap"></div>
+        ${body}
+      </main>`;
   }
 
   async function connectGemini(key) {
@@ -690,7 +982,7 @@ ${ctx}`;
       <header class="topbar">
         <button class="icon-btn" data-act="cert" aria-label="자격증 홈으로">${icon.back}</button>
         <div class="topbar-title">${s.id}과목 · ${esc(s.name)}</div>
-        <span class="icon-btn ghost"></span>
+        <button class="icon-btn" data-act="home" aria-label="홈으로">${icon.home}</button>
       </header>
       <main class="page">
         <div class="ch-head">
@@ -791,11 +1083,12 @@ ${ctx}`;
       <header class="topbar">
         <button class="icon-btn" data-act="back-chapter" aria-label="챕터로">${icon.back}</button>
         <div class="topbar-title">개념 공부 · ${esc(chapterName(c))}</div>
-        <span class="icon-btn ghost"></span>
+        <button class="icon-btn" data-act="home" aria-label="홈으로">${icon.home}</button>
       </header>
       <main class="page">
         ${lessons.length ? `
-          <p class="lead"><u class="hot">밑줄</u>은 시험에 자주 나오는 부분이에요. 처음부터 끝까지 읽고 아래 핵심 문장으로 확인해 보세요.</p>
+          <p class="lead"><u class="hot">밑줄</u>은 시험에 자주 나오는 부분이에요. 처음부터 끝까지 읽고 아래 핵심 문장으로 확인해 보세요.
+          <span class="lead-sub">내용 기준: 2026년 10월. 법령·세제가 바뀌면 달라질 수 있으니 최신 기본서와 함께 보세요.</span></p>
           ${lessons.map(lessonHTML).join('')}` : ''}
         <h2 class="section-title">핵심 문장 확인 <span class="hint">${fs.length}개 · <mark class="ok">강조된 부분</mark>이 시험에서 바뀌어 나와요</span></h2>
         <div class="study-list">${cards}</div>
@@ -915,7 +1208,7 @@ ${ctx}`;
       <header class="topbar">
         <button class="icon-btn" data-act="cert" aria-label="자격증 홈으로">${icon.back}</button>
         <div class="topbar-title">${esc(session.title)}</div>
-        <span class="icon-btn ghost"></span>
+        <button class="icon-btn" data-act="home" aria-label="홈으로">${icon.home}</button>
       </header>
       <main class="page">
         <section class="panel score">
@@ -937,6 +1230,136 @@ ${ctx}`;
       <div class="dock">${session.back === 'chapter'
         ? `<div class="dock-row"><button class="btn lg" data-act="cert">자격증 홈</button><button class="btn lg" data-act="back-chapter">챕터로</button></div>`
         : '<button class="btn lg" data-act="cert">자격증 홈</button>'}</div>`;
+  }
+
+  // ───────── 화면: 모의고사 풀기 ─────────
+  function mockView() {
+    const m = mock;
+    const q = m.qs[m.i];
+    const a = m.answers[m.i];
+    const done = m.answers.filter((x) => x != null).length;
+    const s = subjectOf(q.fact.s);
+    const last = m.i === m.qs.length - 1;
+
+    const bar = m.confirm === 'quit' ? `
+      <div class="mock-confirm">
+        <span>그만두면 이번 모의고사 기록이 남지 않아요.</span>
+        <div class="mock-confirm-actions">
+          <button class="btn" data-act="mock-cancel">계속 풀기</button>
+          <button class="btn danger" data-act="mock-quit-yes">그만두기</button>
+        </div>
+      </div>` : m.confirm === 'submit' ? `
+      <div class="mock-confirm">
+        <span>${done < m.qs.length ? `아직 안 푼 문항이 <b>${m.qs.length - done}개</b> 있어요. ` : ''}제출하면 채점하고 결과를 보여 줘요.</span>
+        <div class="mock-confirm-actions">
+          <button class="btn" data-act="mock-cancel">계속 풀기</button>
+          <button class="btn primary" data-act="mock-submit-yes">제출하기</button>
+        </div>
+      </div>` : '';
+
+    const grid = m.grid ? `
+      <section class="panel mock-grid">
+        ${cert.subjects.map((sub) => `
+          <div class="mg-subject">${sub.id}과목 · ${esc(sub.name)}</div>
+          <div class="mg-cells">${m.qs.map((x, i) => (x.fact.s === sub.id ? `
+            <button class="mg-cell ${m.answers[i] != null ? 'done' : ''} ${i === m.i ? 'now' : ''}" data-act="mock-jump" data-i="${i}">${i + 1}</button>` : '')).join('')}
+          </div>`).join('')}
+      </section>` : '';
+
+    return `
+      <header class="quizbar mockbar">
+        <button class="icon-btn" data-act="mock-quit" aria-label="모의고사 그만두기">${icon.close}</button>
+        <span class="mock-timer" aria-label="남은 시간">${fmtTime(m.deadline - Date.now())}</span>
+        <button class="mock-count" data-act="mock-grid" aria-expanded="${m.grid}">${done}<small>/${m.qs.length} 답함</small></button>
+      </header>
+      ${bar}
+      <main class="page quiz">
+        ${grid}
+        <div class="meta">
+          <span class="tag">${m.i + 1}번</span>
+          <span class="crumb">${s.id}과목 · ${esc(q.fact.t)}</span>
+        </div>
+        <h1 class="prompt">${q.prompt}</h1>
+        ${q.stem ? `<div class="stem">${q.stem}</div>` : ''}
+        <ol class="choices">${q.choices.map((c, i) => `
+          <li>
+            <button class="choice ${a === i ? 'is-picked' : ''}" data-act="mock-answer" data-i="${i}" aria-pressed="${a === i}">
+              <span class="choice-key">${i + 1}</span>
+              <span class="choice-body"><span class="choice-text">${c.html}</span></span>
+            </button>
+          </li>`).join('')}</ol>
+      </main>
+      <div class="dock">
+        <div class="dock-row">
+          <button class="btn lg" data-act="mock-prev" ${m.i === 0 ? 'disabled' : ''}>이전</button>
+          ${last
+            ? '<button class="btn primary lg" data-act="mock-submit">제출하기</button>'
+            : '<button class="btn primary lg" data-act="mock-next">다음</button>'}
+        </div>
+      </div>`;
+  }
+
+  // ───────── 화면: 모의고사 결과 ─────────
+  function mockResultView() {
+    const r = mock.result;
+    const needTotal = Math.ceil(r.total * cert.pass.total);
+    const reason = r.pass ? '모든 과목이 과락을 넘고 합격선도 넘었어요.'
+      : r.score < needTotal ? `합격선(${needTotal}문항)까지 ${needTotal - r.score}문항이 부족해요.`
+        : '총점은 넘었지만 과락 과목이 있어요.';
+    const items = mock.qs.map((q, i) => ({ q, i, a: mock.answers[i], ok: mock.answers[i] != null && q.choices[mock.answers[i]].correct }));
+    const shown = mock.reviewWrongOnly ? items.filter((x) => !x.ok) : items;
+
+    return `
+      <header class="topbar">
+        <button class="icon-btn" data-act="cert" aria-label="자격증 홈으로">${icon.back}</button>
+        <div class="topbar-title">모의고사 결과</div>
+        <button class="icon-btn" data-act="home" aria-label="홈으로">${icon.home}</button>
+      </header>
+      <main class="page">
+        <section class="panel score">
+          <div class="mock-verdict ${r.pass ? 'pass' : 'fail'}">${r.pass ? '합격' : '불합격'}</div>
+          <div class="score-ring" style="--p:${Math.round((r.score / r.total) * 100)}"><span>${r.score}<small>/${r.total}</small></span></div>
+          <div class="score-msg">${reason}</div>
+          <div class="score-sub">${r.timeUp ? '시간이 다 되어 자동 제출했어요 · ' : ''}걸린 시간 ${fmtTime(r.used)}</div>
+        </section>
+
+        <h2 class="section-title">과목별 결과 <span class="hint">과목별 ${pctText(cert.pass.subject)} 미만이면 과락</span></h2>
+        <section class="panel list">${r.per.map((p) => `
+          <div class="row mock-row">
+            <span class="row-num">${p.s.id}</span>
+            <span class="row-main">
+              <span class="row-title">${esc(p.s.name)}</span>
+              <span class="row-sub">${p.ok} / ${p.total}문항 · 과락 기준 ${p.cut}문항</span>
+              <span class="meter"><i style="width:${(p.ok / p.total) * 100}%"></i></span>
+            </span>
+            <span class="pill ${p.pass ? 'ok' : 'bad'}">${p.pass ? '통과' : '과락'}</span>
+          </div>`).join('')}
+        </section>
+
+        <section class="stack">
+          <button class="btn primary lg" data-act="mock-start">${icon.shuffle}<span>새 문제로 다시 응시</span></button>
+        </section>
+
+        <h2 class="section-title">문제별 해설
+          <span class="seg">
+            <button class="seg-btn ${mock.reviewWrongOnly ? 'on' : ''}" data-act="mock-review" data-v="wrong">틀린 문제 ${items.filter((x) => !x.ok).length}</button>
+            <button class="seg-btn ${!mock.reviewWrongOnly ? 'on' : ''}" data-act="mock-review" data-v="all">전체</button>
+          </span>
+        </h2>
+        <section class="panel list">${shown.length ? shown.map(({ q, i, a, ok }) => `
+          <details class="result-item">
+            <summary>
+              <span class="dot ${ok ? 'ok' : 'bad'}">${ok ? icon.check : icon.cross}</span>
+              <span class="ri-main">
+                <span class="ri-type">${i + 1}번 · ${esc(q.fact.t)} · ${a == null ? '안 푼 문항' : `내 답 ${a + 1}번`}</span>
+                <span class="ri-text">${q.answerHTML}</span>
+              </span>
+              ${icon.chevron}
+            </summary>
+            <p class="ri-ex">${esc(q.fact.e)}</p>
+          </details>`).join('') : '<p class="exam-note">모두 맞혔어요!</p>'}
+        </section>
+      </main>`;
   }
 
   // ───────── 화면: 오답노트 ─────────
@@ -970,11 +1393,12 @@ ${ctx}`;
       <header class="topbar">
         <button class="icon-btn" data-act="cert" aria-label="자격증 홈으로">${icon.back}</button>
         <div class="topbar-title">오답노트</div>
-        <span class="icon-btn ghost"></span>
+        <button class="icon-btn" data-act="home" aria-label="홈으로">${icon.home}</button>
       </header>
       <main class="page">
         ${ws.length ? `
           <p class="lead">틀린 개념은 다른 유형으로 <b>연속 2번</b> 맞히면 오답노트에서 빠져요.</p>
+          ${notesAIHTML()}
           ${groups}` : `
           <section class="panel empty">
             <div class="empty-icon">${icon.check}</div>
@@ -988,7 +1412,7 @@ ${ctx}`;
   function render() {
     const html = {
       home: homeView, cert: certView, chapter: chapterView, study: studyView, settings: settingsView,
-      quiz: quizView, result: resultView, notes: notesView,
+      quiz: quizView, result: resultView, notes: notesView, mock: mockView, mockResult: mockResultView,
     }[view]();
     $app.innerHTML = html;
     document.body.dataset.view = view;
@@ -1049,6 +1473,19 @@ ${ctx}`;
     },
     answer: (el) => answer(Number(el.dataset.i)),
     home: () => go('home'),
+    // 모의고사: 같은 화면 안에서는 render()만 해서 타이머를 유지한다
+    'mock-start': () => startMock(),
+    'mock-answer': (el) => { mock.answers[mock.i] = Number(el.dataset.i); render(); },
+    'mock-prev': () => { if (mock.i > 0) { mock.i -= 1; render(); window.scrollTo(0, 0); } },
+    'mock-next': () => { if (mock.i < mock.qs.length - 1) { mock.i += 1; render(); window.scrollTo(0, 0); } },
+    'mock-jump': (el) => { mock.i = Number(el.dataset.i); mock.grid = false; render(); window.scrollTo(0, 0); },
+    'mock-grid': () => { mock.grid = !mock.grid; render(); },
+    'mock-quit': () => { mock.confirm = 'quit'; render(); },
+    'mock-submit': () => { mock.confirm = 'submit'; render(); },
+    'mock-cancel': () => { mock.confirm = null; render(); },
+    'mock-quit-yes': () => { mock = null; go('cert'); },
+    'mock-submit-yes': () => submitMock(false),
+    'mock-review': (el) => { mock.reviewWrongOnly = el.dataset.v === 'wrong'; render(); },
     'pick-cert': (el) => {
       cert = CERTS.find((c) => c.id === el.dataset.id);
       chapter = null;
@@ -1062,6 +1499,9 @@ ${ctx}`;
     },
     // 문제 화면에서 설정으로 왔다면 푸는 중이던 문제로 그대로 돌아간다
     'settings-back': () => go(settingsBack === 'settings' ? 'cert' : settingsBack),
+    goal: (el) => { db.goal = Number(el.dataset.n); save(); render(); },
+    'notes-ai': () => summarizeWrong(),
+    'notes-ai-stop': () => { if (notesAI && notesAI.ctl) notesAI.ctl.abort(); },
     'gemini-test': () => connectGemini(Gemini.load().key),
     'gemini-clear': () => {
       Gemini.clear();
@@ -1128,8 +1568,16 @@ ${ctx}`;
 
   // 키보드: 1~4 보기 선택, Enter 다음 (입력창에 쓰는 중에는 무시)
   document.addEventListener('keydown', (e) => {
-    if (view !== 'quiz' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.target.closest && e.target.closest('input, textarea')) return;
+    if (view === 'mock' && mock && !mock.confirm) {
+      const n = Number(e.key);
+      if (n >= 1 && n <= 4) actions['mock-answer']({ dataset: { i: n - 1 } });
+      if (e.key === 'ArrowRight') actions['mock-next']();
+      if (e.key === 'ArrowLeft') actions['mock-prev']();
+      return;
+    }
+    if (view !== 'quiz') return;
     const q = session.qs[session.i];
     const answered = session.picked[session.i] != null;
     if (e.key === 'Enter' && answered) { e.preventDefault(); next(); return; }
@@ -1139,4 +1587,11 @@ ${ctx}`;
   });
 
   render();
+
+  // 오프라인 사용: 웹사이트(https)·로컬(localhost)에서만 서비스 워커 등록. claude.ai 안에서는 쓰지 않는다
+  if (!IN_CLAUDE && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => { /* 등록 실패해도 앱은 그대로 동작 */ });
+    });
+  }
 })();

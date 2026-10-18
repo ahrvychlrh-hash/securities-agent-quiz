@@ -26,7 +26,6 @@
   --hero-2: #0B53D6;
   --hero-text: #FFFFFF;
   --hero-sub: rgba(255, 255, 255, .82);
-  --hero-cloud: rgba(255, 255, 255, .16);
   --c-skin: #FFD7B8;
   --c-skin-shade: #F2B892;
   --c-hair: #1D2433;
@@ -72,7 +71,6 @@
     --hero-2: #0A2E78;
     --hero-text: #FFFFFF;
     --hero-sub: rgba(255, 255, 255, .78);
-    --hero-cloud: rgba(255, 255, 255, .10);
     --c-skin: #F7CBA8;
     --c-skin-shade: #E2A985;
     --c-hair: #10141F;
@@ -115,7 +113,6 @@
   --hero-2: #0A2E78;
   --hero-text: #FFFFFF;
   --hero-sub: rgba(255, 255, 255, .78);
-  --hero-cloud: rgba(255, 255, 255, .10);
   --c-skin: #F7CBA8;
   --c-skin-shade: #E2A985;
   --c-hair: #10141F;
@@ -197,6 +194,7 @@ svg { width: 16px; height: 16px; flex: none; }
 .section-title .hint { font-weight: 400; color: var(--text-2); font-size: 12px; }
 .lead { margin: 4px 4px 0; font-size: 13px; color: var(--text-2); }
 .lead b { color: var(--text); font-weight: 600; }
+.lead-sub { display: block; margin-top: 4px; font-size: 12px; color: var(--text-3); }
 .footnote { margin: 28px 4px 0; font-size: 12px; color: var(--text-3); }
 
 /* 통계 */
@@ -501,6 +499,8 @@ mark.ok { background: var(--mark-ok); font-weight: 600; }
 .topbar-actions { display: flex; gap: 2px; }
 .ai-setup-text { margin: 8px 0 12px; font-size: 14px; color: var(--text-2); }
 .ai-setup .btn { width: 100%; }
+.ai-summary-text { max-width: 100%; margin: 10px 0 12px; }
+.notes-ai-btn, .ai > .btn { width: 100%; margin-top: 4px; }
 .set-card { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
 .set-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .set-title { display: flex; align-items: center; gap: 6px; font-size: 15px; font-weight: 600; }
@@ -548,7 +548,8 @@ select.field { padding-right: 8px; }
 .apply.closed { color: var(--text-3); }
 .dday { flex: none; min-width: 48px; padding: 3px 8px; border-radius: 8px; text-align: center; font-size: 13px; font-weight: 700; background: var(--accent-bg); color: var(--accent-text); font-variant-numeric: tabular-nums; }
 .dday.today { background: var(--warn-bg); color: var(--warn); }
-.exam-empty { margin: 0; padding: 16px; font-size: 13px; color: var(--text-2); }
+.dday.wait { background: var(--hover); color: var(--text-2); font-weight: 600; }
+.exam-row.pending .exam-date b { color: var(--text-2); }
 .footnote a { color: inherit; text-decoration: underline; }
 
 /* ── 꿈디 로고 ── */
@@ -583,18 +584,14 @@ select.field { padding-right: 8px; }
   border-radius: 14px 14px 14px 4px; background: rgba(255, 255, 255, .18);
   font-size: 13px; font-weight: 600; line-height: 1.45;
 }
-.hero-art { position: absolute; right: -14px; bottom: 20px; z-index: 1; width: 62%; max-width: 300px; animation: float 4.5s ease-in-out infinite; }
+.hero-art { position: absolute; right: 0; bottom: 30px; z-index: 1; width: 50%; max-width: 236px; animation: float 4.5s ease-in-out infinite; }
 @keyframes float { 50% { transform: translateY(-6px); } }
-.hero-home { min-height: 450px; padding-bottom: 48px; }
+.hero-home { min-height: 400px; padding-bottom: 48px; }
 .hero-cert { min-height: 340px; padding-bottom: 44px; }
 .hero-cert .hero-copy { max-width: 58%; }
 .hero-cert .hero-title { font-size: 26px; }
-.hero-cert .hero-art { width: 50%; max-width: 240px; }
+.hero-cert .hero-art { width: 40%; max-width: 190px; bottom: 34px; }
 
-.cloud { position: absolute; z-index: 0; border-radius: 999px; background: var(--hero-cloud); }
-.cloud::before { content: ''; position: absolute; left: 22%; bottom: 35%; width: 52%; height: 130%; border-radius: 50%; background: inherit; }
-.cloud.c1 { width: 190px; height: 58px; top: 150px; left: -60px; }
-.cloud.c2 { width: 150px; height: 46px; top: 62px; right: -40px; }
 .spark {
   position: absolute; z-index: 2; width: 14px; height: 14px; background: #FFD66B;
   clip-path: polygon(50% 0, 62% 38%, 100% 50%, 62% 62%, 50% 100%, 38% 62%, 0 50%, 38% 38%);
@@ -605,7 +602,7 @@ select.field { padding-right: 8px; }
 @keyframes twinkle { 50% { opacity: .35; transform: scale(.7); } }
 
 /* 캐릭터 색은 모두 토큰에서 */
-.character { display: block; width: 100%; height: auto; filter: drop-shadow(0 14px 22px rgba(0, 20, 60, .25)); }
+.character { display: block; width: 100%; height: auto; overflow: visible; filter: drop-shadow(0 14px 22px rgba(0, 20, 60, .25)); }
 .c-eyes { transform-box: fill-box; transform-origin: center; animation: eyeblink 5s infinite; }
 @keyframes eyeblink { 0%, 95%, 100% { transform: scaleY(1); } 97% { transform: scaleY(.1); } }
 
@@ -628,6 +625,139 @@ select.field { padding-right: 8px; }
   border-radius: 12px; background: var(--accent-bg); color: var(--accent-text); font-size: 13px; font-weight: 700;
 }
 .cert-name { flex: 1; min-width: 0; font-size: 17px; font-weight: 700; letter-spacing: -0.02em; }
+
+/* ── 캐릭터 동작: 가끔 손 흔들기 · 고개 갸웃 · 점프, 누르면 바로 점프 ── */
+.character .c-arm, .character .c-head, .character .c-jump { transform-box: view-box; }
+.character .c-arm { transform-origin: 74px 182px; animation: wave 7s ease-in-out infinite; }
+.character .c-head { transform-origin: 120px 160px; animation: tilt 11s ease-in-out infinite; }
+.character .c-jump { transform-origin: 120px 266px; animation: hop 13s ease-in-out infinite; }
+.character .c-shadow { transform-box: view-box; transform-origin: 120px 268px; animation: shadow 13s ease-in-out infinite; }
+@keyframes wave {
+  0%, 70%, 100% { transform: rotate(0); }
+  74% { transform: rotate(16deg); } 78% { transform: rotate(-10deg); }
+  82% { transform: rotate(16deg); } 86% { transform: rotate(-10deg); } 90% { transform: rotate(0); }
+}
+@keyframes tilt {
+  0%, 40%, 58%, 100% { transform: rotate(0); }
+  45%, 53% { transform: rotate(-7deg); }
+}
+@keyframes hop {
+  0%, 84%, 100% { transform: translateY(0) scale(1, 1); }
+  86% { transform: translateY(0) scale(1.06, .94); }
+  90% { transform: translateY(-22px) scale(.97, 1.04); }
+  94% { transform: translateY(0) scale(1.04, .96); }
+  97% { transform: translateY(-6px) scale(1, 1); }
+}
+@keyframes shadow {
+  0%, 84%, 100% { transform: scale(1); opacity: 1; }
+  90% { transform: scale(.75); opacity: .6; }
+}
+
+/* 자격증 화면: 홈 버튼 */
+.home-pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 14px 0 10px;
+  border: 0; border-radius: 18px; background: rgba(255, 255, 255, .18); color: var(--hero-text);
+  font-size: 14px; font-weight: 700; cursor: pointer;
+}
+.home-pill:active { background: rgba(255, 255, 255, .28); }
+.home-pill svg { width: 18px; height: 18px; }
+
+/* ── 자격증 화면 하단: 할 수 있는 일 · 연봉 참고 ── */
+.career { padding: 6px 16px; }
+.career-list { list-style: none; margin: 0; padding: 0; }
+.career-list li { display: flex; gap: 12px; padding: 14px 0; }
+.career-list li + li { border-top: 1px solid var(--border); }
+.career-num {
+  display: grid; place-items: center; flex: none; width: 26px; height: 26px; margin-top: 1px;
+  border-radius: 50%; background: var(--accent-bg); color: var(--accent-text); font-size: 13px; font-weight: 700;
+}
+.career-list b { display: block; font-size: 15px; margin-bottom: 2px; }
+.career-list li > span:last-child > span { font-size: 14px; line-height: 1.65; color: var(--text-2); }
+.pay { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+.facts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.fact { display: flex; flex-direction: column; gap: 2px; padding: 12px; border-radius: var(--radius-sm); background: var(--accent-bg); }
+.fact-key { font-size: 12px; font-weight: 600; color: var(--text-2); }
+.fact b { font-size: 22px; font-weight: 800; letter-spacing: -0.03em; color: var(--accent-text); font-variant-numeric: tabular-nums; }
+.fact-sub { font-size: 12px; line-height: 1.5; color: var(--text-2); }
+.pay-job { margin-top: 6px; font-size: 13px; font-weight: 700; }
+.pay-row { display: grid; grid-template-columns: 58px 1fr auto; align-items: center; gap: 10px; font-size: 13px; }
+.pay-label { color: var(--text-2); }
+.pay-track { height: 10px; border-radius: 5px; background: var(--hover); overflow: hidden; }
+.pay-track i { display: block; height: 100%; border-radius: 5px; background: var(--accent); opacity: .45; }
+.pay-row.mid .pay-track i { opacity: 1; }
+.pay-row.mid .pay-label, .pay-row.mid .pay-val { color: var(--text); font-weight: 700; }
+.pay-val { font-variant-numeric: tabular-nums; text-align: right; min-width: 72px; }
+.pay-note { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--text-3); }
+
+/* ── 홈: 오늘의 목표 · 연속 학습일 ── */
+.goal { display: flex; align-items: center; gap: 14px; padding: 14px 16px; margin-bottom: 20px; }
+.goal-ring {
+  position: relative; display: grid; place-items: center; flex: none; width: 76px; height: 76px; border-radius: 50%;
+  background: conic-gradient(var(--accent) calc(var(--p) * 1%), var(--border) 0);
+}
+.goal-ring::before { content: ''; position: absolute; inset: 7px; border-radius: 50%; background: var(--panel); }
+.goal-ring span { position: relative; font-size: 20px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.goal-ring small { font-size: 12px; color: var(--text-2); font-weight: 600; }
+.goal.done .goal-ring { background: conic-gradient(var(--ok) 100%, var(--border) 0); }
+.goal-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.goal-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.goal-top b { font-size: 16px; }
+.streak { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border-radius: 999px; background: var(--warn-bg); color: var(--warn); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.streak svg { width: 14px; height: 14px; }
+.goal-msg { margin: 0; font-size: 13px; line-height: 1.5; color: var(--text-2); }
+.week { display: flex; justify-content: space-between; margin-top: 4px; }
+.wd { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.wd i { width: 12px; height: 12px; border-radius: 50%; background: var(--border); }
+.wd.on i { background: var(--accent); }
+.wd.today i { box-shadow: 0 0 0 2px var(--panel), 0 0 0 3.5px var(--accent); }
+.wd small { font-size: 10px; color: var(--text-3); }
+.set-gap { height: 12px; }
+
+/* ── 실전 모의고사 ── */
+.mock-entry {
+  display: flex; align-items: center; gap: 12px; width: 100%; margin-top: 12px;
+  padding: 16px 14px; text-align: left; cursor: pointer; color: var(--hero-text);
+  background: linear-gradient(135deg, var(--hero-1), var(--hero-2)); border: 0; border-radius: var(--radius);
+}
+.mock-entry .mode-icon { background: rgba(255, 255, 255, .18); }
+.mock-entry .mode-sub { color: rgba(255, 255, 255, .85); }
+.mock-entry > svg { color: rgba(255, 255, 255, .85); }
+.mockbar { justify-content: space-between; }
+.mock-timer {
+  font-size: 20px; font-weight: 800; letter-spacing: -0.02em; font-variant-numeric: tabular-nums;
+  padding: 2px 12px; border-radius: 10px; background: var(--accent-bg); color: var(--accent-text);
+}
+.mock-timer.warn { background: var(--bad-bg); color: var(--bad); }
+.mock-count { border: 0; background: transparent; color: var(--text); font-size: 15px; font-weight: 700; cursor: pointer; font-variant-numeric: tabular-nums; }
+.mock-count small { font-size: 12px; color: var(--text-2); font-weight: 500; }
+.mock-confirm {
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) + 52px); z-index: 9;
+  display: flex; flex-direction: column; gap: 10px; padding: 12px 16px;
+  background: var(--warn-bg); font-size: 14px; line-height: 1.5;
+}
+.mock-confirm-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.choice.is-picked { border-color: var(--accent); background: var(--accent-bg); }
+.choice.is-picked .choice-key { background: var(--accent); border-color: var(--accent); color: #FFFFFF; }
+.mock-grid { padding: 12px; margin-bottom: 16px; }
+.mg-subject { margin: 8px 2px 6px; font-size: 12px; font-weight: 700; color: var(--text-2); }
+.mg-subject:first-child { margin-top: 0; }
+.mg-cells { display: grid; grid-template-columns: repeat(auto-fill, minmax(38px, 1fr)); gap: 6px; }
+.mg-cell {
+  height: 36px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--panel);
+  color: var(--text-2); font-size: 13px; font-weight: 600; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.mg-cell.done { background: var(--accent-bg); border-color: transparent; color: var(--accent-text); }
+.mg-cell.now { outline: 2px solid var(--accent); outline-offset: 1px; }
+.mock-verdict { margin-bottom: 12px; padding: 4px 16px; border-radius: 999px; font-size: 15px; font-weight: 800; }
+.mock-verdict.pass { background: var(--ok-bg); color: var(--ok); }
+.mock-verdict.fail { background: var(--bad-bg); color: var(--bad); }
+.mock-row { cursor: default; }
+.mock-row:hover, .mock-row:active { background: transparent; }
+.pill.bad { background: var(--bad-bg); color: var(--bad); }
+.seg { display: inline-flex; margin-left: auto; padding: 2px; border-radius: 10px; background: var(--hover); }
+.seg-btn { border: 0; background: transparent; padding: 4px 10px; border-radius: 8px; font-size: 12px; font-weight: 600; color: var(--text-2); cursor: pointer; }
+.seg-btn.on { background: var(--panel); color: var(--text); box-shadow: var(--shadow); }
+.exam-note { margin: 0; padding: 16px; font-size: 14px; color: var(--text-2); }
 
 /* ── 개념 공부: 본문 ── */
 .lesson { margin-top: 12px; padding: 18px 16px 16px; }
