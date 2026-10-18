@@ -61,6 +61,12 @@ node serve.js
 
 빌드가 필요 없는 정적 파일이라 폴더를 그대로 올리면 됩니다. `index.html`이 첫 화면입니다.
 
+- 사이트: https://ahrvychlrh-hash.github.io/securities-agent-quiz/
+- 저장소: https://github.com/ahrvychlrh-hash/securities-agent-quiz (공개 저장소, API 키 등 비밀 정보 없음)
+- 수정 사항 반영: 커밋 후 `git push` 하면 1~2분 뒤 사이트에 자동 반영됩니다.
+- 휴대폰: 사이트를 열고 브라우저 메뉴의 **홈 화면에 추가**를 누르면 앱처럼 쓸 수 있습니다.
+- 학습 기록과 제미나이 키는 기기(브라우저)마다 따로 저장됩니다. 휴대폰에서는 설정에서 키를 한 번 더 입력하세요.
+
 ## 합격 기준
 
 과목별 정답률 40% 이상(과락 면제)이면서 전체 정답률 60%(60문항) 이상.
