@@ -1,0 +1,5 @@
+# 로컬 개발 설정 (웹사이트에 올리지 않음)
+.claude/
+node_modules/
+.DS_Store
+Thumbs.db

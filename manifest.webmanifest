@@ -1,0 +1,10 @@
+{
+  "name": "투자권유대행인 문제풀이",
+  "short_name": "투자권유대행인",
+  "description": "증권투자권유대행인 자격시험 문제풀이",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F5F5F5",
+  "theme_color": "#FFFFFF",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}
